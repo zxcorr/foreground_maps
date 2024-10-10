@@ -1,4 +1,5 @@
 numpy
+astropy
 matplotlib
 healpy
 pysm3
