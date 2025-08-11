@@ -6,6 +6,9 @@ Description: This script generates intensity maps (I, Q, U) at a user-defined
 frequency range using PySM3 (Python Sky Model https://pysm3.readthedocs.io/en/latest/ )
 for selected emission models. The maps for all frequencies are combined into a
 single FITS file with a matrix data structure, and plots are saved as .png images.
+The output FITS file follows the convention of the example file, storing 30
+data channels and a separate HDU with 31 frequency bin edges.
+
 '''
 
 import pysm3
@@ -29,7 +32,7 @@ Frequency_range = [980, 1260]  # [initial, final] MHz
 Frequency_nbins = 30           # Number of frequency channels
 
 # Set the output directory for saving the results
-output_dir = "/path/to/output/directory/" #ex.: "/home/gcosta/input_maps/teste_spectra/"
+output_dir = "/path/to/output/directory/"
 
 ####################################################################
 #### DEFINE FUNCTIONS FOR SAVING PLOTS
@@ -54,20 +57,24 @@ def save_figure(filename, figure, output_dir):
 # Ensure the output directory exists
 os.makedirs(output_dir, exist_ok=True)
 
-# Generate frequency array using np.linspace
-frequencies = np.linspace(Frequency_range[0], Frequency_range[1], Frequency_nbins + 1) * u.MHz
+# Generate frequency bin edges (31 values)
+frequency_edges = np.linspace(Frequency_range[0], Frequency_range[1], Frequency_nbins + 1)
+
+# Generate frequency bin centers (30 values) for map generation
+frequency_centers = (frequency_edges[:-1] + frequency_edges[1:]) / 2
 
 # List to store the intensity maps for each frequency channel
 map_I_data = []
 
-print(f"Generating maps for {len(frequencies)} frequencies from {Frequency_range[0]}MHz to {Frequency_range[1]}MHz...")
+print(f"Generating maps for {len(frequency_centers)} frequencies from {Frequency_range[0]}MHz to {Frequency_range[1]}MHz...")
 
-for i, freq in enumerate(frequencies):
+for i, freq_center in enumerate(frequency_centers):
     # Create a sky model with emission components in preset_strings
     sky_model = pysm3.Sky(nside=nside, preset_strings=preset_strings)
 
     # Obtain the emission map and get the intensity component (Stokes I)
-    emission_map = sky_model.get_emission(freq)
+    # The frequency unit is required by PySM3
+    emission_map = sky_model.get_emission(freq_center * u.MHz)
     map_I = emission_map[0].value # We only store the Stokes I component
 
     # Append the map data to our list
@@ -77,7 +84,7 @@ for i, freq in enumerate(frequencies):
     if i == 0:
         output_path = os.path.join(output_dir, f"plots/")
         rotator = hp.Rotator(coord=['G', 'C'])
-        hp.mollview(rotator.rotate_map_pixel(map_I), norm='hist', title=f"Intensity Map I at {freq.value}MHz", unit=emission_map.unit, coord='C')
+        hp.mollview(rotator.rotate_map_pixel(map_I), norm='hist', title=f"Intensity Map I at {freq_center}MHz", unit=emission_map.unit, coord='C')
         save_figure("intensity_I.png", plt, output_path)
 
 print("Map generation complete. Creating single FITS file...")
@@ -87,10 +94,10 @@ print("Map generation complete. Creating single FITS file...")
 #######################################################################
 
 # Convert the list of maps into a NumPy array
-# The shape will be (nbins, npix)
+# The shape will be (nbins, npix) -> (30, 196608)
 map_data_matrix = np.array(map_I_data)
 
-# Transpose the matrix to match the example format (npix, nbins)
+# Transpose the matrix to match the example format (npix, nbins) -> (196608, 30)
 map_data_matrix = map_data_matrix.T
 
 # Create the primary HDU (Header and Data Unit) for the main data matrix
@@ -106,12 +113,12 @@ header['FREQ_MAX'] = (Frequency_range[1], 'Maximum frequency in MHz')
 header['NBINS'] = (Frequency_nbins, 'Number of frequency channels')
 header['COMMENT'] = 'This file contains the full sky map for a range of frequencies.'
 header['COMMENT'] = 'The data matrix has shape (pixels, frequencies).'
+header['COMMENT'] = 'Frequencies used for data generation are the centers of the bins.'
 
-# Create a second HDU to store the frequency vector
-# This is crucial for making the file self-descriptive, like in your example.
-freq_vector_hdu = fits.ImageHDU(data=frequencies.value)
+# Create a second HDU to store the frequency vector (edges)
+freq_vector_hdu = fits.ImageHDU(data=frequency_edges)
 freq_vector_hdu.header['EXTNAME'] = 'FREQUENCIES'
-freq_vector_hdu.header['COMMENT'] = 'This HDU contains the frequency vector in MHz for the main data matrix.'
+freq_vector_hdu.header['COMMENT'] = 'This HDU contains the frequency bin edges in MHz for the main data matrix.'
 
 # Create an HDUList to combine both HDUs
 hdul = fits.HDUList([primary_hdu, freq_vector_hdu])
